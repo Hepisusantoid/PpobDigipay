@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 
+const MANUAL_TSEL2K_SKU = process.env.NEXT_PUBLIC_TSEL2K_SKU || ""; // opsional
+
 export default function Home() {
   const [products, setProducts] = useState([]);
   const [selected, setSelected] = useState("");
@@ -7,38 +9,42 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const fetchPrices = async () => {
-      try {
-        const res = await fetch("/api/prices");
-        const data = await res.json();
-        if (Array.isArray(data)) {
-          setProducts(data);
-        } else {
-          setMessage(data.error || "Gagal memuat harga");
-        }
-      } catch (e) {
-        setMessage(e.message);
-      } finally {
-        setLoading(false);
-      }
-    };
-    fetchPrices();
-  }, []);
+  // Ambil "Pulsa Telkomsel" saja supaya fokus
+  const fetchPrices = async () => {
+    setLoading(true);
+    setMessage("");
+    try {
+      const res = await fetch("/api/prices?category=Pulsa&brand=TELKOMSEL");
+      const data = await res.json();
+      if (Array.isArray(data)) setProducts(data);
+      else setMessage(data.error || "Gagal memuat harga");
+    } catch (e) {
+      setMessage(e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  // Cari produk "Telkomsel 2.000" dari price list
+  useEffect(() => { fetchPrices(); }, []);
+
+  // Deteksi otomatis Telkomsel 2.000 dari nama/sku
   const tsel2000 = useMemo(() => {
-    return products.find((p) => {
-      const name = String(p.product_name || "");
-      const brand = String(p.brand || "");
-      const isTelkomsel = /telkomsel/i.test(name) || /telkomsel/i.test(brand);
-      // cocokan "2000" atau "2.000"
-      const has2000 = /(^|[^\d])2[.,]?\s?0{3}(?!\d)/i.test(name);
-      return isTelkomsel && has2000;
+    const fromSku = MANUAL_TSEL2K_SKU
+      ? products.find(p => p.buyer_sku_code === MANUAL_TSEL2K_SKU)
+      : null;
+
+    if (fromSku) return fromSku;
+
+    return products.find(p => {
+      const name = (p.product_name || "").toLowerCase();
+      // cocok "2.000", "2000", "2 000"
+      const has2000 = /(^|[^\d])2[.\s]?\d{3}(?!\d)/.test(name);
+      const hasTelkomsel = /telkomsel/.test(name) || /telkomsel/.test((p.brand || "").toLowerCase());
+      return hasTelkomsel && has2000;
     }) || null;
   }, [products]);
 
-  // Susun daftar dengan Telkomsel 2.000 dipin di atas (tanpa duplikasi)
+  // Susun list: Telkomsel 2.000 dipin di paling atas (tanpa duplikasi)
   const renderedList = useMemo(() => {
     const seen = new Set();
     const out = [];
@@ -46,9 +52,7 @@ export default function Home() {
       out.push(tsel2000);
       seen.add(tsel2000.buyer_sku_code);
     }
-    for (const p of products) {
-      if (!seen.has(p.buyer_sku_code)) out.push(p);
-    }
+    for (const p of products) if (!seen.has(p.buyer_sku_code)) out.push(p);
     return out;
   }, [products, tsel2000]);
 
@@ -57,7 +61,11 @@ export default function Home() {
       setSelected(tsel2000.buyer_sku_code);
       setMessage(`Dipilih: ${tsel2000.product_name} [${tsel2000.buyer_sku_code}]`);
     } else {
-      setMessage("Produk Telkomsel 2.000 tidak ditemukan di price list saat ini.");
+      setMessage(
+        MANUAL_TSEL2K_SKU
+          ? `SKU ${MANUAL_TSEL2K_SKU} tidak ditemukan di price list.`
+          : "Produk Telkomsel 2.000 belum ada di price list akunmu."
+      );
     }
   };
 
@@ -67,7 +75,6 @@ export default function Home() {
       setMessage("⚠️ Pilih produk & isi nomor HP dulu");
       return;
     }
-
     try {
       const res = await fetch("/api/order", {
         method: "POST",
@@ -101,7 +108,7 @@ export default function Home() {
         </button>
       </div>
 
-      <label>Pilih Produk:</label><br />
+      <label>Pilih Produk (Pulsa Telkomsel):</label><br />
       <select
         value={selected}
         onChange={(e) => setSelected(e.target.value)}
@@ -110,33 +117,28 @@ export default function Home() {
       >
         <option value="">{loading ? "Memuat daftar..." : "-- pilih produk --"}</option>
 
-        {/* Opsi pinned di paling atas */}
         {tsel2000 && (
-          <option value={tsel2000.buyer_sku_code}>
-            ⭐ {tsel2000.product_name} — Rp{Number(tsel2000.price).toLocaleString("id-ID")}
-          </option>
+          <>
+            <option value={tsel2000.buyer_sku_code}>
+              ⭐ {tsel2000.product_name} — Rp{Number(tsel2000.price).toLocaleString("id-ID")}
+            </option>
+            <option disabled>────────────</option>
+          </>
         )}
 
-        {/* Divider visual kecil */}
-        {tsel2000 && <option disabled>────────────</option>}
-
-        {/* Sisa produk (tanpa duplikasi) */}
         {renderedList.map((p) => (
           <option key={p.buyer_sku_code} value={p.buyer_sku_code}>
-            {p.product_name} — Rp{Number(p.price).toLocaleString("id-ID")}
+            [{p.buyer_sku_code}] {p.product_name} — Rp{Number(p.price).toLocaleString("id-ID")}
           </option>
         ))}
       </select>
 
       <br /><br />
-      <button
-        onClick={handleOrder}
-        style={{ padding: 12, borderRadius: 8, border: "1px solid #888", minWidth: 160 }}
-      >
+      <button onClick={handleOrder} style={{ padding: 12, borderRadius: 8, border: "1px solid #888", minWidth: 160 }}>
         Beli Sekarang
       </button>
 
       <pre style={{ whiteSpace: "pre-wrap", marginTop: 12 }}>{message}</pre>
     </div>
   );
-          }
+}
