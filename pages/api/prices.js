@@ -1,6 +1,6 @@
-import crypto from "crypto";
-
 export default async function handler(req, res) {
+  const crypto = require("crypto");
+
   const username = process.env.DIGIFLAZZ_USERNAME;
   const apiKey = process.env.DIGIFLAZZ_APIKEY;
 
@@ -9,7 +9,8 @@ export default async function handler(req, res) {
   }
 
   // Digiflazz: sign = md5(username + api_key + "pricelist")
-  const sign = crypto.createHash("md5")
+  const sign = crypto
+    .createHash("md5")
     .update(username + apiKey + "pricelist")
     .digest("hex");
 
@@ -24,24 +25,32 @@ export default async function handler(req, res) {
       }),
     });
 
-    const data = await response.json();
+    const json = await response.json();
 
     if (!response.ok) {
-      return res.status(500).json({ error: data.message || "Gagal ambil data harga" });
+      return res.status(500).json({ error: json.message || "Gagal ambil data harga", raw: json });
     }
 
-    // Ambil hanya yang aktif & ada harga
-    const list = (data.data || [])
-      .filter(p => (p.buyer_product_status || "").toLowerCase() === "active" && Number(p.price) > 0)
-      .map(p => ({
+    const data = Array.isArray(json.data) ? json.data : [];
+
+    const list = data
+      .filter((p) => {
+        const statusRaw = String(p.buyer_product_status ?? p.status ?? "").toLowerCase();
+        const isActive = ["active", "available", "aktif", "true", "1"].includes(statusRaw);
+        const price = Number(p.price);
+        return isActive && Number.isFinite(price) && price > 0;
+      })
+      .map((p) => ({
         buyer_sku_code: p.buyer_sku_code,
         product_name: p.product_name,
-        brand: p.brand,
-        category: p.category,
-        price: Number(p.price)
-      }));
+        brand: p.brand || "",
+        category: p.category || "",
+        price: Number(p.price),
+      }))
+      .sort((a, b) => a.price - b.price)
+      .slice(0, 50);
 
-    return res.status(200).json(list.slice(0, 50)); // tampilkan 50 dulu biar ringan
+    return res.status(200).json(list);
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
